@@ -5,11 +5,12 @@ import { NextResponse } from "next/server";
 const SHEET_ID = process.env.GOOGLE_SHEET_ID;
 const TAB = "Presensi";
 const TZ = "Asia/Jakarta";
-
-// Token rahasia yang HARUS cocok dengan isi QR presensi.
 const PRESENSI_TOKEN = process.env.PRESENSI_TOKEN;
 
-// Klien Sheets terautentikasi via service account (JWT)
+// Variabel Lingkungan Supabase
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
 function getSheets() {
   const auth = new google.auth.JWT({
     email: process.env.GOOGLE_CLIENT_EMAIL,
@@ -19,7 +20,6 @@ function getSheets() {
   return google.sheets({ version: "v4", auth });
 }
 
-// Waktu WIB dihitung server-side
 function jakartaNow() {
   const parts = new Intl.DateTimeFormat("en-GB", {
     timeZone: TZ,
@@ -35,7 +35,6 @@ function jakartaNow() {
   };
 }
 
-// Cegah nilai diawali = + - @ agar tidak dieksekusi sebagai rumus
 function sanitize(v) {
   const s = (v ?? "").toString().trim().slice(0, 120);
   return /^[=+\-@]/.test(s) ? `'${s}` : s;
@@ -48,13 +47,35 @@ function tokenCocok(a, b) {
   return diff === 0;
 }
 
-// ==================== TAMBAHAN: API UNTUK VALIDASI LOGIN KKN UNDIP ====================
-// Menyediakan daftar NIM resmi Tim II KKN UNDIP Desa Nambangan 2026 yang boleh login.
-// Silakan sesuaikan/tambahkan daftar NIM anggota tim Anda di bawah ini.
-const DAFTAR_NIM_RESMI = [
-  "21120123130089", // Contoh NIM Anda
-  // "211201231XXXXX", // Tambahkan NIM anggota lainnya di sini
-];
+// ================= FUNGSI VALIDASI NIM LEWAR SUPABASE REST API =================
+async function cekNimDiSupabase(nim) {
+  if (!SUPABASE_URL || !SUPABASE_KEY) {
+    console.error("Variabel environment Supabase belum dikonfigurasi.");
+    return false;
+  }
+  
+  try {
+    // DISESUAIKAN: Mengubah 'anggota_kkn' menjadi 'daftar_mahasiswa' sesuai DDL Anda
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/daftar_mahasiswa?nim=eq.${nim}&select=nim`, {
+      method: "GET",
+      headers: {
+        "apikey": SUPABASE_KEY,
+        "Authorization": `Bearer ${SUPABASE_KEY}`,
+        "Content-Type": "application/json",
+      },
+      next: { revalidate: 0 }
+    });
+
+    if (!response.ok) return false;
+    const data = await response.json();
+    
+    return data && data.length > 0;
+  } catch (error) {
+    console.error("Gagal terhubung ke Supabase:", error);
+    return false;
+  }
+}
+// ==============================================================================
 
 export async function GET(req) {
   try {
@@ -65,11 +86,11 @@ export async function GET(req) {
       return NextResponse.json({ ok: false, error: "NIM tidak boleh kosong." }, { status: 400 });
     }
 
-    // Periksa apakah NIM terdaftar di daftar resmi tim KKN
-    const terdaftar = DAFTAR_NIM_RESMI.includes(nim);
+    // Pengecekan dinamis ke database Supabase
+    const terdaftar = await cekNimDiSupabase(nim);
 
     if (!terdaftar) {
-      return NextResponse.json({ ok: false, error: "Password atau Nama salah" }, { status: 401 });
+      return NextResponse.json({ ok: false, error: "NIM Anda tidak terdaftar dalam Tim KKN Desa Nambangan 2026." }, { status: 401 });
     }
 
     return NextResponse.json({ ok: true, message: "NIM valid." });
@@ -77,7 +98,6 @@ export async function GET(req) {
     return NextResponse.json({ ok: false, error: "Gagal memvalidasi akun." }, { status: 500 });
   }
 }
-// =====================================================================================
 
 export async function POST(req) {
   try {
@@ -87,42 +107,30 @@ export async function POST(req) {
     const deviceId = sanitize(body.deviceId);
     const qrData = (body.qr_data ?? "").toString().trim();
 
-    // 1) Validasi identitas minimum
     if (!nama || !deviceId) {
-      return NextResponse.json(
-        { ok: false, error: "Nama dan perangkat tidak boleh kosong." },
-        { status: 400 }
-      );
+      return NextResponse.json({ ok: false, error: "Nama dan perangkat tidak boleh kosong." }, { status: 400 });
     }
 
-    // Validasi tambahan saat presensi agar NIM penembak gelap tetap tertolak
-    if (idAnggota && !DAFTAR_NIM_RESMI.includes(idAnggota)) {
-      return NextResponse.json(
-        { ok: false, error: "NIM tidak dikenali sebagai anggota resmi." },
-        { status: 403 }
-      );
+    // Keamanan tambahan saat submit presensi: pastikan NIM di data presensi terdaftar di Supabase
+    if (idAnggota) {
+      const terdaftar = await cekNimDiSupabase(idAnggota);
+      if (!terdaftar) {
+        return NextResponse.json({ ok: false, error: "NIM tidak dikenali sebagai anggota resmi." }, { status: 403 });
+      }
     }
 
-    // 2) Validasi QR
     if (PRESENSI_TOKEN) {
       if (!tokenCocok(qrData, PRESENSI_TOKEN)) {
-        return NextResponse.json(
-          { ok: false, error: "QR tidak valid. Pastikan memindai QR presensi resmi." },
-          { status: 403 }
-        );
+        return NextResponse.json({ ok: false, error: "QR tidak valid. Pastikan memindai QR presensi resmi." }, { status: 403 });
       }
     } else if (!qrData) {
-      return NextResponse.json(
-        { ok: false, error: "QR kosong. Silakan pindai QR presensi." },
-        { status: 400 }
-      );
+      return NextResponse.json({ ok: false, error: "QR kosong. Silakan pindai QR presensi." }, { status: 400 });
     }
 
     const sheets = getSheets();
     const { tanggal, waktu, stamp } = jakartaNow();
     const key = idAnggota || deviceId;
 
-    // 3) Anti-duplikat
     const read = await sheets.spreadsheets.values.get({
       spreadsheetId: SHEET_ID,
       range: `${TAB}!A:F`,
@@ -141,7 +149,6 @@ export async function POST(req) {
       });
     }
 
-    // 4) Tulis baris baru
     await sheets.spreadsheets.values.append({
       spreadsheetId: SHEET_ID,
       range: `${TAB}!A:F`,
@@ -157,9 +164,6 @@ export async function POST(req) {
     });
   } catch (err) {
     console.error("Presensi error:", err?.message);
-    return NextResponse.json(
-      { ok: false, error: "Terjadi kesalahan server. Coba lagi." },
-      { status: 500 }
-    );
+    return NextResponse.json({ ok: false, error: "Terjadi kesalahan server. Coba lagi." }, { status: 500 });
   }
 }
