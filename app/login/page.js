@@ -3,14 +3,10 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
-// Kunci penyimpanan identitas di sisi klien
 const LS_KEY = 'presensi_user';
 const DEVICE_KEY = 'presensi_device';
-// Umur sesi cookie (12 jam) — cukup untuk sekali sesi presensi
 const COOKIE_MAX_AGE = 60 * 60 * 12;
 
-// Ambil / buat deviceId unik & persisten (dipakai server untuk anti-duplikat
-// bila NIM tidak ada). crypto.randomUUID tersedia di semua browser modern.
 function getDeviceId() {
   let id = localStorage.getItem(DEVICE_KEY);
   if (!id) {
@@ -27,7 +23,6 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  // Jika sudah login, langsung lempar ke halaman scan
   useEffect(() => {
     try {
       if (localStorage.getItem(LS_KEY)) router.replace('/');
@@ -38,12 +33,12 @@ export default function LoginPage() {
     const n = nama.trim();
     const id = nim.trim();
     if (n.length < 3) return 'Nama minimal 3 karakter.';
-    // NIM Undip berupa angka (mis. 21120123130089). Longgar: 8–20 digit.
     if (!/^\d{8,20}$/.test(id)) return 'NIM harus berupa 8–20 digit angka.';
     return '';
   }
 
-  function handleSubmit(e) {
+  // ==================== PERBAIKAN: OPERASI VERIFIKASI SEBELUM LOGIN ====================
+  async function handleSubmit(e) {
     e?.preventDefault?.();
     setError('');
 
@@ -52,18 +47,31 @@ export default function LoginPage() {
 
     setSubmitting(true);
     try {
+      // Lakukan pengecekan NIM ke server API
+      const res = await fetch(`/api/presensi?nim=${nim.trim()}`, {
+        method: 'GET',
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        setError(data.error || 'NIM salah atau tidak terdaftar.');
+        setSubmitting(false);
+        return;
+      }
+
+      // Jika NIM valid, lanjutkan proses pembuatan sesi login
       const deviceId = getDeviceId();
       const user = { nama: nama.trim(), nim: nim.trim(), deviceId };
       localStorage.setItem(LS_KEY, JSON.stringify(user));
-      // Cookie non-httpOnly hanya sebagai penanda sesi agar middleware
-      // bisa memproteksi rute /. Bukan menyimpan data sensitif.
+      
       document.cookie = `presensi_auth=1; path=/; max-age=${COOKIE_MAX_AGE}; SameSite=Lax`;
       router.replace('/');
     } catch (err) {
       setSubmitting(false);
-      setError('Tidak bisa menyimpan sesi. Aktifkan penyimpanan/localStorage browser.');
+      setError('Terjadi masalah jaringan atau penyimpanan browser dinonaktifkan.');
     }
   }
+  // =====================================================================================
 
   return (
     <main className="page">
@@ -76,15 +84,14 @@ export default function LoginPage() {
         <div className="card__body">
           {error && <div className="alert alert--err">{error}</div>}
 
-          {/* Bukan <form> supaya konsisten dengan pola event handler React */}
           <div>
             <div className="field">
-              <label htmlFor="nama">Nama Lengkap</label>
+              <label htmlFor="nama">Nama Panggilan</label>
               <input
                 id="nama"
                 type="text"
                 autoComplete="name"
-                placeholder="mis. Endika Aryandhi"
+                placeholder="mis. aca, hariz, enrico (huruf kecil semua)"
                 value={nama}
                 onChange={(e) => setNama(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSubmit(e)}
