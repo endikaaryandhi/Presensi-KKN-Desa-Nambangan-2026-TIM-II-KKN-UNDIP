@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 
 export default function Home() {
-  const [phase, setPhase] = useState("loading"); // loading|form|sending|done|dup|error
+  const [phase, setPhase] = useState("loading");
   const [nama, setNama] = useState("");
   const [idAnggota, setIdAnggota] = useState("");
   const [result, setResult] = useState(null);
