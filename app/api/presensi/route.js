@@ -6,6 +6,10 @@ const SHEET_ID = process.env.GOOGLE_SHEET_ID;
 const TAB = "Presensi";
 const TZ = "Asia/Jakarta";
 
+// Token rahasia yang HARUS cocok dengan isi QR presensi.
+// Diset di environment (Vercel) — jangan hardcode di sini.
+const PRESENSI_TOKEN = process.env.PRESENSI_TOKEN;
+
 // Klien Sheets terautentikasi via service account (JWT)
 function getSheets() {
   const auth = new google.auth.JWT({
@@ -39,17 +43,42 @@ function sanitize(v) {
   return /^[=+\-@]/.test(s) ? `'${s}` : s;
 }
 
+// Bandingkan token secara konstan-waktu (mencegah timing attack ringan)
+function tokenCocok(a, b) {
+  if (typeof a !== "string" || typeof b !== "string" || a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
 export async function POST(req) {
   try {
     const body = await req.json().catch(() => ({}));
     const nama = sanitize(body.nama);
     const idAnggota = sanitize(body.idAnggota);
     const deviceId = sanitize(body.deviceId);
+    const qrData = (body.qr_data ?? "").toString().trim();
 
-    // Validasi minimum
+    // 1) Validasi identitas minimum
     if (!nama || !deviceId) {
       return NextResponse.json(
-        { ok: false, error: "Nama dan device tidak boleh kosong." },
+        { ok: false, error: "Nama dan perangkat tidak boleh kosong." },
+        { status: 400 }
+      );
+    }
+
+    // 2) Validasi QR: isi QR harus sama persis dengan token rahasia.
+    //    Jika PRESENSI_TOKEN belum diset (mode dev), cukup pastikan ada isinya.
+    if (PRESENSI_TOKEN) {
+      if (!tokenCocok(qrData, PRESENSI_TOKEN)) {
+        return NextResponse.json(
+          { ok: false, error: "QR tidak valid. Pastikan memindai QR presensi resmi." },
+          { status: 403 }
+        );
+      }
+    } else if (!qrData) {
+      return NextResponse.json(
+        { ok: false, error: "QR kosong. Silakan pindai QR presensi." },
         { status: 400 }
       );
     }
@@ -60,7 +89,7 @@ export async function POST(req) {
     // Kunci identitas: pakai NIM bila ada, jika tidak pakai deviceId
     const key = idAnggota || deviceId;
 
-    // Anti-duplikat: sudah presensi hari ini?
+    // 3) Anti-duplikat: sudah presensi hari ini?
     const read = await sheets.spreadsheets.values.get({
       spreadsheetId: SHEET_ID,
       range: `${TAB}!A:F`,
@@ -79,7 +108,7 @@ export async function POST(req) {
       });
     }
 
-    // Tulis baris baru — RAW agar aman dari formula injection
+    // 4) Tulis baris baru — RAW agar aman dari formula injection
     await sheets.spreadsheets.values.append({
       spreadsheetId: SHEET_ID,
       range: `${TAB}!A:F`,

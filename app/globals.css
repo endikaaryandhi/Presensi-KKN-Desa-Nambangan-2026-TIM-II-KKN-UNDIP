@@ -1,0 +1,218 @@
+/* app/globals.css
+   Semua gaya ditulis manual (tanpa Tailwind) supaya langsung jalan di Vercel
+   tanpa perlu install/konfig tambahan. Tema biru mengikuti nuansa Undip. */
+
+:root {
+  --biru: #1e3a8a;      /* navy */
+  --biru-terang: #2563eb;
+  --biru-muda: #dbeafe;
+  --hijau: #16a34a;
+  --hijau-muda: #dcfce7;
+  --merah: #dc2626;
+  --merah-muda: #fee2e2;
+  --kuning-muda: #fef9c3;
+  --kuning: #ca8a04;
+  --abu: #6b7280;
+  --abu-muda: #f3f4f6;
+  --teks: #111827;
+  --radius: 16px;
+  --shadow: 0 10px 30px rgba(30, 58, 138, 0.12);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: var(--teks);
+  background:
+    radial-gradient(1200px 500px at 50% -10%, #eef2ff 0%, transparent 60%),
+    #f8fafc;
+  -webkit-font-smoothing: antialiased;
+}
+
+.page {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 20px 16px;
+}
+
+.card {
+  width: 100%;
+  max-width: 420px;
+  background: #fff;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  border: 1px solid #eef2ff;
+}
+
+.card__header {
+  background: linear-gradient(135deg, var(--biru) 0%, var(--biru-terang) 100%);
+  color: #fff;
+  padding: 22px 20px;
+  text-align: center;
+}
+
+.card__header h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+.card__header p {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: #dbeafe;
+}
+
+.card__body { padding: 22px 20px; }
+
+.card__footer {
+  background: var(--abu-muda);
+  color: var(--abu);
+  font-size: 12px;
+  text-align: center;
+  padding: 14px;
+}
+
+/* ---------- Form ---------- */
+.field { margin-bottom: 14px; text-align: left; }
+
+.field label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 6px;
+}
+
+.field input {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1.5px solid #e5e7eb;
+  border-radius: 12px;
+  font-size: 15px;
+  outline: none;
+  transition: border-color .15s, box-shadow .15s;
+}
+
+.field input:focus {
+  border-color: var(--biru-terang);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+
+.field .hint { font-size: 11px; color: var(--abu); margin-top: 5px; }
+
+.btn {
+  width: 100%;
+  padding: 13px 16px;
+  border: none;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform .05s, background .15s, opacity .15s;
+}
+.btn:active { transform: translateY(1px); }
+.btn:disabled { opacity: .6; cursor: not-allowed; }
+
+.btn--primary { background: var(--biru-terang); color: #fff; }
+.btn--primary:hover:not(:disabled) { background: var(--biru); }
+
+.btn--ghost {
+  background: #fff;
+  color: var(--biru-terang);
+  border: 1.5px solid var(--biru-muda);
+}
+.btn--ghost:hover:not(:disabled) { background: var(--biru-muda); }
+
+.btn + .btn { margin-top: 10px; }
+
+/* ---------- Info user ---------- */
+.user-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--biru-muda);
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin-bottom: 16px;
+  text-align: left;
+}
+.user-chip .avatar {
+  width: 38px; height: 38px; border-radius: 50%;
+  background: var(--biru-terang); color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 15px; flex: 0 0 auto;
+}
+.user-chip .meta { line-height: 1.25; overflow: hidden; }
+.user-chip .meta strong { display: block; font-size: 14px; color: var(--biru); }
+.user-chip .meta span { font-size: 12px; color: #4b5563; }
+
+/* ---------- Scanner ---------- */
+.scan-hint {
+  color: #374151;
+  font-size: 14px;
+  font-weight: 500;
+  margin: 0 0 14px;
+}
+#reader {
+  width: 100%;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 2px dashed var(--biru-terang);
+  background: #0b1220;
+  min-height: 60px;
+}
+#reader video { border-radius: 10px; }
+
+/* ---------- Status result ---------- */
+.result { display: flex; flex-direction: column; align-items: center; padding: 14px 0; }
+
+.badge {
+  width: 76px; height: 76px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  margin-bottom: 14px;
+}
+.badge svg { width: 40px; height: 40px; }
+.badge--ok  { background: var(--hijau-muda); color: var(--hijau); }
+.badge--warn{ background: var(--kuning-muda); color: var(--kuning); }
+.badge--err { background: var(--merah-muda);  color: var(--merah); }
+
+.result h2 { margin: 0 0 6px; font-size: 20px; }
+.result p  { margin: 0; color: #4b5563; font-size: 14px; }
+.result .kv { margin-top: 4px; font-size: 13px; color: #6b7280; }
+.result .kv b { color: #111827; }
+
+/* ---------- Spinner ---------- */
+.spinner {
+  width: 46px; height: 46px; border-radius: 50%;
+  border: 4px solid var(--biru-muda);
+  border-top-color: var(--biru-terang);
+  animation: spin .8s linear infinite;
+  margin-bottom: 12px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---------- Alert ---------- */
+.alert {
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 13px;
+  margin-bottom: 14px;
+  text-align: left;
+}
+.alert--err  { background: var(--merah-muda);  color: #991b1b; }
+.alert--info { background: var(--biru-muda);   color: #1e3a8a; }
+
+.link-btn {
+  background: none; border: none; color: var(--abu);
+  font-size: 12px; cursor: pointer; text-decoration: underline;
+  margin-top: 14px;
+}

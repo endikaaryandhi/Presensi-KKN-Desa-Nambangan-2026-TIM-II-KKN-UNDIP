@@ -1,111 +1,238 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { Html5QrcodeScanner } from 'html5-qrcode';
+import { useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 
-export default function PresensiPage() {
-  const [scanResult, setScanResult] = useState(null);
-  const [loading, setLoading] = useState(false);
+const LS_KEY = 'presensi_user';
 
+// Status UI: 'idle' (belum scan) | 'scanning' | 'processing' | 'done'
+export default function ScanPage() {
+  const router = useRouter();
+  const [user, setUser] = useState(null);
+  const [phase, setPhase] = useState('idle');
+  const [error, setError] = useState('');
+  const [result, setResult] = useState(null); // { status, message, nama, waktu }
+
+  const scannerRef = useRef(null);   // instance Html5Qrcode
+  const startingRef = useRef(false); // cegah start ganda
+
+  // Guard: hanya boleh diakses bila sudah login
   useEffect(() => {
-    // Inisialisasi scanner QR Code
-    const scanner = new Html5QrcodeScanner(
-      "reader",
-      { 
-        fps: 10, 
-        qrbox: { width: 250, height: 250 },
-        aspectRatio: 1.0 
-      },
-      false
-    );
+    let u = null;
+    try { u = JSON.parse(localStorage.getItem(LS_KEY) || 'null'); } catch {}
+    if (!u?.nim) { router.replace('/login'); return; }
+    setUser(u);
 
-    // Fungsi jika QR berhasil terbaca
-    const onScanSuccess = async (decodedText) => {
-      scanner.clear(); // Hentikan kamera setelah berhasil
-      setScanResult(decodedText);
-      setLoading(true);
-
-      try {
-        // Contoh pemanggilan ke API Presensi Anda
-        // File rute API Anda sepertinya ada di app/api/presensi/route.js
-        /*
-        const response = await fetch('/api/presensi', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ qr_data: decodedText })
-        });
-        const data = await response.json();
-        */
-        
-        // Simulasi loading API
-        setTimeout(() => setLoading(false), 1500);
-
-      } catch (error) {
-        console.error("Gagal melakukan presensi", error);
-        setLoading(false);
-      }
-    };
-
-    scanner.render(onScanSuccess, (error) => {
-      // Error handling (bisa diabaikan agar console tidak penuh)
-    });
-
-    // Cleanup saat komponen di-unmount
-    return () => {
-      scanner.clear().catch(error => console.error("Gagal mematikan kamera.", error));
-    };
+    // Matikan kamera bila komponen dilepas / pindah halaman
+    return () => { stopScanner(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  async function stopScanner() {
+    const s = scannerRef.current;
+    scannerRef.current = null;
+    if (!s) return;
+    try {
+      // stop() hanya valid saat sedang memindai
+      if (s.isScanning) await s.stop();
+      await s.clear();
+    } catch { /* diamkan: kamera mungkin sudah berhenti */ }
+  }
+
+  async function mulaiScan() {
+    if (startingRef.current) return;
+    startingRef.current = true;
+    setError('');
+    setResult(null);
+    setPhase('scanning');
+
+    try {
+      // Import dinamis: html5-qrcode menyentuh objek browser,
+      // jadi jangan di-import saat render server (SSR).
+      const { Html5Qrcode } = await import('html5-qrcode');
+
+      const scanner = new Html5Qrcode('reader', { verbose: false });
+      scannerRef.current = scanner;
+
+      await scanner.start(
+        { facingMode: 'environment' }, // utamakan kamera belakang di HP
+        { fps: 10, qrbox: { width: 240, height: 240 }, aspectRatio: 1.0 },
+        onScanSuccess,
+        () => { /* frame tanpa QR — abaikan agar console bersih */ }
+      );
+    } catch (err) {
+      startingRef.current = false;
+      setPhase('idle');
+      // Pesan spesifik untuk kegagalan izin/kamera
+      const msg = String(err?.message || err || '');
+      if (/permission|denied|NotAllowed/i.test(msg)) {
+        setError('Izin kamera ditolak. Aktifkan izin kamera di browser lalu coba lagi.');
+      } else if (/secure|https|NotSupported/i.test(msg)) {
+        setError('Kamera butuh HTTPS. Buka lewat domain https (Vercel) atau localhost.');
+      } else if (/NotFound|no camera/i.test(msg)) {
+        setError('Kamera tidak ditemukan pada perangkat ini.');
+      } else {
+        setError('Gagal membuka kamera. Coba muat ulang halaman.');
+      }
+    }
+  }
+
+  async function onScanSuccess(decodedText) {
+    // Kunci: hentikan kamera dulu agar tidak trigger berkali-kali
+    await stopScanner();
+    startingRef.current = false;
+    setPhase('processing');
+
+    try {
+      const res = await fetch('/api/presensi', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nama: user.nama,
+          idAnggota: user.nim,   // NIM sebagai kunci identitas
+          deviceId: user.deviceId,
+          qr_data: decodedText,  // isi QR untuk divalidasi server
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok || data.ok === false) {
+        setResult({
+          status: 'error',
+          message: data.error || 'Presensi gagal. Coba lagi.',
+        });
+      } else {
+        setResult({
+          status: data.status === 'sudah' ? 'warn' : 'ok',
+          message: data.message,
+          nama: data.nama,
+          waktu: data.waktu,
+          tanggal: data.tanggal,
+        });
+      }
+    } catch (err) {
+      setResult({ status: 'error', message: 'Tidak ada koneksi ke server.' });
+    } finally {
+      setPhase('done');
+    }
+  }
+
+  function scanUlang() {
+    setResult(null);
+    setError('');
+    setPhase('idle');
+  }
+
+  function logout() {
+    try {
+      localStorage.removeItem(LS_KEY);
+      document.cookie = 'presensi_auth=; path=/; max-age=0; SameSite=Lax';
+    } catch {}
+    router.replace('/login');
+  }
+
+  if (!user) return null; // menunggu guard menyelesaikan cek
+
+  const inisial = (user.nama?.trim()?.[0] || '?').toUpperCase();
+
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4">
-      {/* Header Form */}
-      <div className="bg-white w-full max-w-md rounded-2xl shadow-lg overflow-hidden">
-        <div className="bg-blue-600 p-6 text-center">
-          <h1 className="text-2xl font-bold text-white">Sistem Presensi</h1>
-          <p className="text-blue-100 mt-1">KKN Desa Nambangan 2026</p>
+    <main className="page">
+      <div className="card">
+        <div className="card__header">
+          <h1>Sistem Presensi</h1>
+          <p>KKN Desa Nambangan 2026</p>
         </div>
 
-        <div className="p-6 text-center">
-          {!scanResult ? (
+        <div className="card__body">
+          {/* Identitas pengguna aktif */}
+          <div className="user-chip">
+            <div className="avatar">{inisial}</div>
+            <div className="meta">
+              <strong>{user.nama}</strong>
+              <span>NIM {user.nim}</span>
+            </div>
+          </div>
+
+          {error && <div className="alert alert--err">{error}</div>}
+
+          {/* IDLE: tombol buka kamera */}
+          {phase === 'idle' && (
             <>
-              <p className="text-gray-600 mb-4 font-medium">Arahkan QR Code Anda ke kamera</p>
-              {/* Tempat kamera muncul */}
-              <div id="reader" className="w-full rounded-lg overflow-hidden border-2 border-dashed border-blue-400"></div>
+              <p className="scan-hint">Tekan tombol, lalu arahkan kamera ke QR presensi.</p>
+              <button className="btn btn--primary" onClick={mulaiScan}>
+                Buka Kamera &amp; Scan QR
+              </button>
             </>
-          ) : (
-            <div className="flex flex-col items-center py-6">
-              {loading ? (
-                <>
-                  <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-blue-600 border-b-4 mb-4"></div>
-                  <p className="text-gray-600 font-medium">Memproses Presensi...</p>
-                </>
-              ) : (
-                <>
-                  <div className="w-20 h-20 bg-green-100 text-green-600 rounded-full flex items-center justify-center mb-4">
-                    <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path>
-                    </svg>
-                  </div>
-                  <h2 className="text-2xl font-bold text-gray-800">Presensi Berhasil!</h2>
-                  <p className="text-gray-500 mt-2">Data ID: <span className="font-semibold text-gray-800">{scanResult}</span></p>
-                  
-                  <button 
-                    onClick={() => window.location.reload()} 
-                    className="mt-6 w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-xl transition duration-200"
-                  >
-                    Scan Ulang
-                  </button>
-                </>
-              )}
+          )}
+
+          {/* SCANNING: viewfinder kamera */}
+          {phase === 'scanning' && (
+            <>
+              <p className="scan-hint">Arahkan QR presensi ke dalam kotak.</p>
+              <div id="reader" />
+              <button className="btn btn--ghost" style={{ marginTop: 12 }} onClick={() => { stopScanner(); setPhase('idle'); }}>
+                Batalkan
+              </button>
+            </>
+          )}
+
+          {/* PROCESSING: kirim ke server */}
+          {phase === 'processing' && (
+            <div className="result">
+              <div className="spinner" />
+              <p>Memproses presensi…</p>
             </div>
           )}
+
+          {/* DONE: tampilkan hasil */}
+          {phase === 'done' && result && (
+            <div className="result">
+              {result.status === 'ok' && (
+                <div className="badge badge--ok">
+                  <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+                  </svg>
+                </div>
+              )}
+              {result.status === 'warn' && (
+                <div className="badge badge--warn">
+                  <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 100 20 10 10 0 000-20z" />
+                  </svg>
+                </div>
+              )}
+              {result.status === 'error' && (
+                <div className="badge badge--err">
+                  <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </div>
+              )}
+
+              <h2>
+                {result.status === 'ok' && 'Presensi Berhasil'}
+                {result.status === 'warn' && 'Sudah Presensi'}
+                {result.status === 'error' && 'Gagal'}
+              </h2>
+              <p>{result.message}</p>
+              {result.waktu && (
+                <p className="kv">Waktu: <b>{result.tanggal} {result.waktu} WIB</b></p>
+              )}
+
+              <button className="btn btn--primary" style={{ marginTop: 18 }} onClick={scanUlang}>
+                Scan Ulang
+              </button>
+            </div>
+          )}
+
+          <div style={{ textAlign: 'center' }}>
+            <button className="link-btn" onClick={logout}>Keluar (ganti akun)</button>
+          </div>
         </div>
-        
-        {/* Footer */}
-        <div className="bg-gray-100 p-4 text-center text-sm text-gray-500">
-          Tim II KKN UNDIP &copy; 2026
-        </div>
+
+        <div className="card__footer">Tim II KKN UNDIP &copy; 2026</div>
       </div>
-    </div>
+    </main>
   );
 }
